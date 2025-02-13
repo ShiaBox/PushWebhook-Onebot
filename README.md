@@ -40,7 +40,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
     {
       "type": "wechat_work", //企业微信渠道
       "enable": true, //是否开启
-      "split_images": false, //是否开启分段发送，开启后图和文字会按顺序一条一条推送。关闭多图文混排消息后会合并成一条文字消息发送，其余图片顺序发送。
+      "split_images": false, //是否开启分段发送，开启后，如果用户发送了很多图和文字，会按顺序一条一条推送。关闭后，多图文混排消息会合并成一条文字消息发送，其余图片顺序发送。
       "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send",
       "key": "YOUR_KEY"
     },
