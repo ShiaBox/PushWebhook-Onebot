@@ -1,0 +1,14 @@
+{
+  "private_message": {
+    "header": "# 来自QQ的私聊消息 \n > - 发送人：<font color=\"info\">{nickname}</font> \n > - QQ：<font color=\"warning\">{user_id}</font> \n > - 时间：<font color=\"comment\">{msg_time}</font>\n\n",
+    "content_part": "**消息内容（{current}/{total}）**\n{content}"
+  },
+  "friend_request": {
+    "title": "收到新的QQ好友申请",
+    "content": "# 收到新的QQ好友申请\n> - 申请人QQ：<font color=\"warning\">{user_id}</font>\n> - 申请备注：<font color=\"comment\">{comment}</font>\n> - 处理状态：<font color=\"{color}\">{action_status}</font>"
+  },
+  "system_alert": {
+    "offline": "⚠️ QQ机器人已离线！",
+    "check_failed": "⚠️ 机器人状态检查失败！"
+  }
+}
