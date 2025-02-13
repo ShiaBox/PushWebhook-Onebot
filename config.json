@@ -1,0 +1,42 @@
+{
+  "cqhttp_api_url": "http://127.0.0.1:5700",
+  "port": 7788,
+  "image_placeholder": "[图片]",
+  "auto_approve_friend": {
+    "enable": true,
+    "keywords": ["希亚", "骰"],
+    "welcome_message": "这是由程序自动通过的好友请求，有事请留言！"
+  },
+  "message_id_expiry": 10,
+  "auto_reply": {
+    "test_command": "希亚",
+    "response": "自动回复机器人在线中。"
+  },
+  "push_channels": [
+    {
+      "type": "wechat_work",
+      "enable": true,
+      "split_images": false,
+      "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send",
+      "key": "YOUR_KEY"
+    },
+    {
+      "type": "feishu",
+      "enable": true,
+      "split_images": true,
+      "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook",
+      "key": "YOUR_KEY",
+      "sign_secret": "YOUR_SIGN_SECRET",
+      "app_id": "YOUR_APP_ID",
+      "app_secret": "YOUR_APP_SECERT"
+    },
+    {
+      "type": "dingtalk",
+      "enable": true,
+      "split_images": false,
+      "webhook_url": "https://oapi.dingtalk.com/robot/send",
+      "key": "YOUR_KEY",
+      "sign_secret": "YOUR_SIGN_SECRET"
+    }
+  ]
+}
