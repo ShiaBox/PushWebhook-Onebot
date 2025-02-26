@@ -281,6 +281,8 @@ class BotCore:
     def __init__(self):
         self.msg_processor = MessageProcessor()
         self.senders = self._init_senders()
+        self.welcome_sent = set()  # 新增发送状态跟踪
+        self.welcome_lock = Lock()
     
     def _init_senders(self):
         senders = []
@@ -298,7 +300,7 @@ class BotCore:
         return senders
     
     def _upload_feishu_image(self, url):
-        """上传图片到飞书，这个接口用不了，文档里写了需要上传图片并获得image_key，但是自定义机器人没有app_id和app_secret，没法获得tenant_access_token，也就没法获得image_key"""
+        """上传图片到飞书"""
         try:
             # 获取tenant_access_token
             feishu_config = next(c for c in config["push_channels"] if c["type"] == "feishu")
@@ -460,40 +462,85 @@ class BotCore:
     def handle_friend_request(self, event):
         user_id = event.get('user_id')
         comment = event.get('comment', '')
+        flag = event.get('flag')
         approve_config = config["auto_approve_friend"]
         
-        has_keyword = any(kw in comment for kw in approve_config["keywords"])
-        action_status = "已自动通过" if has_keyword and approve_config["enable"] else "请及时处理"
-        color = "info" if has_keyword else "warning"
+        logging.info(f"[好友申请] 收到来自用户 {user_id} 的申请 | 验证信息：'{comment}'")
         
-        # 推送通知
+        # 条件判断合并
+        has_keyword = any(kw in comment for kw in approve_config.get("keywords", []))
+        should_auto_approve = all([
+            approve_config.get("enable", False),
+            has_keyword,
+            event.get('request_type') == 'friend',
+            flag
+        ])
+        
+        # 状态参数设置
+        action_status = "已自动通过" if should_auto_approve else "请及时处理"
+        color = "info" if should_auto_approve else "warning"
+        
+        # 推送通知（无论是否自动通过都推送）
         content = templates["friend_request"]["content"].format(
             user_id=user_id,
             comment=comment,
             color=color,
             action_status=action_status
         )
+        logging.info(f"[好友申请] 推送内容：{content}")
         for sender in self.senders:
             payload = sender._build_text_payload(content)
             sender.send(payload)
         
         # 自动通过逻辑
-        if has_keyword and approve_config["enable"]:
+        if should_auto_approve:
             try:
-                requests.post(
+                # 检查重复处理
+                with self.welcome_lock:
+                    if user_id in self.welcome_sent:
+                        logging.info(f"用户{user_id}已在处理中，跳过重复操作")
+                        return jsonify(status="ignored")
+                    self.welcome_sent.add(user_id)
+
+                # API调用通过好友申请
+                resp = requests.post(
                     f"{config['cqhttp_api_url']}/set_friend_add_request",
-                    json={"flag": event['flag'], "approve": True}
+                    json={"flag": flag, "approve": True},
+                    timeout=5
                 )
-                Timer(2.0, lambda: requests.post(
-                    f"{config['cqhttp_api_url']}/send_private_msg",
-                    json={
-                        "user_id": user_id,
-                        "message": approve_config["welcome_message"]
-                    }
-                )).start()
+                if resp.json().get('status') != 'ok':
+                    logging.error(f"自动通过失败 | 响应：{resp.text}")
+                    return jsonify(status="error"), 500
+
+                # 定义带状态清理的欢迎词发送函数
+                def send_welcome():
+                    try:
+                        for retry in range(3):
+                            try:
+                                resp = requests.post(
+                                    f"{config['cqhttp_api_url']}/send_private_msg",
+                                    json={"user_id": user_id, "message": approve_config["welcome_message"]},
+                                    timeout=5
+                                )
+                                if resp.json().get('status') == 'ok':
+                                    logging.info(f"欢迎词发送成功（用户 {user_id}）")
+                                    return
+                                logging.warning(f"欢迎词发送失败，第{retry+1}次重试...")
+                                time.sleep(2)
+                            except Exception as e:
+                                logging.error(f"发送异常：{str(e)}")
+                        logging.error("欢迎词发送失败，已达最大重试次数")
+                    finally:
+                        with self.welcome_lock:
+                            if user_id in self.welcome_sent:
+                                self.welcome_sent.remove(user_id)
+
+                Timer(2.0, send_welcome).start()
                 return jsonify(status="ok")
             except Exception as e:
-                logging.error(f"处理好友请求失败: {str(e)}")
+                with self.welcome_lock:
+                    self.welcome_sent.discard(user_id)
+                logging.error(f"处理好友请求异常：{str(e)}")
                 return jsonify(status="error"), 500
         return jsonify(status="ignored")
 
@@ -503,6 +550,23 @@ bot = BotCore()
 @app.route('/', methods=['POST'])
 def handle_event():
     event = request.json
+    
+    # 统一处理好友申请的去重检查
+    if event.get('post_type') == 'request' and event.get('request_type') == 'friend':
+        flag = event.get('flag', '')
+        if not flag:
+            return jsonify(status="error", message="缺少flag参数"), 400
+        
+        # 使用flag生成全局唯一ID
+        unique_id = f"friend_req_{flag}"
+        if not bot.msg_processor.deduplicate_message(unique_id):
+            logging.info(f"[去重拦截] 已忽略重复好友申请：{unique_id}")
+            return jsonify(status="ignored")
+        
+        # 在路由层完成所有处理
+        return bot.handle_friend_request(event)
+    
+    # 其他事件处理保持不变
     if event.get('message_type') == 'group':
         return jsonify(status="ignored")
     
@@ -513,8 +577,6 @@ def handle_event():
     try:
         if event.get('post_type') == 'message':
             return handle_private_message(event)
-        elif event.get('post_type') == 'request':
-            return bot.handle_friend_request(event)
     except Exception as e:
         logging.error(f"处理异常: {str(e)}")
     return jsonify(status="ignored")
