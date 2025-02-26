@@ -360,7 +360,7 @@ class BotCore:
             token_resp = requests.post(token_url, json=token_data, timeout=5)
             if token_resp.status_code != 200 or not token_resp.json().get("tenant_access_token"):
                 logging.error("飞书tenant_access_token获取失败")
-                logging.WARNIN("这是因为飞书文档里写了发送图片需要上传图片并获得image_key，但是自定义机器人没有app_id和app_secret，没法获得tenant_access_token，也就没法获得image_key")
+                logging.warning("这是因为飞书文档里写了发送图片需要上传图片并获得image_key，但是自定义机器人没有app_id和app_secret，没法获得tenant_access_token，也就没法获得image_key")
                 return None
             
             # 下载图片
