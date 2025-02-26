@@ -125,16 +125,19 @@ class MessageProcessor:
         
         return segments
     
-    def deduplicate_message(self, message_id):
+    def deduplicate_message(self, message_id, event_time):
         with self.lock:
             current_time = time.time()
+            # 清理过期条目：当前时间 - 事件时间 > 过期时间
             expired = [mid for mid, ts in self.processed_messages.items() 
                       if current_time - ts > config["message_id_expiry"]]
             for mid in expired:
                 del self.processed_messages[mid]
+            # 检查是否已存在
             if message_id in self.processed_messages:
                 return False
-            self.processed_messages[message_id] = current_time
+            # 记录事件原始时间
+            self.processed_messages[message_id] = event_time
             return True
     
 # ================= 推送渠道实现 =================
@@ -281,8 +284,10 @@ class BotCore:
     def __init__(self):
         self.msg_processor = MessageProcessor()
         self.senders = self._init_senders()
-        self.welcome_sent = set()  # 新增发送状态跟踪
+        self.welcome_sent = set() 
         self.welcome_lock = Lock()
+        self.processed_messages = {}
+        self.lock = Lock()
     
     def _init_senders(self):
         senders = []
@@ -557,10 +562,11 @@ def handle_event():
         flag = event.get('flag', '')
         if not flag:
             return jsonify(status="error", message="缺少flag参数"), 400
-        
-        # 使用flag生成全局唯一ID
+
+        # 使用flag生成全局唯一ID，并携带事件时间
         unique_id = f"friend_req_{flag}"
-        if not bot.msg_processor.deduplicate_message(unique_id):
+        event_time = event.get('time', time.time())
+        if not bot.msg_processor.deduplicate_message(unique_id, event_time):
             logging.info(f"[去重拦截] 已忽略重复好友申请：{unique_id}")
             return jsonify(status="ignored")
         
@@ -572,8 +578,10 @@ def handle_event():
         return jsonify(status="ignored")
     
     message_id = event.get('message_id')
-    if message_id and not bot.msg_processor.deduplicate_message(message_id):
-        return jsonify(status="ignored")
+    if message_id:
+        event_time = event.get('time', time.time())
+        if not bot.msg_processor.deduplicate_message(message_id, event_time):
+            return jsonify(status="ignored")
     
     try:
         if event.get('post_type') == 'message':
