@@ -19,6 +19,7 @@ app = Flask(__name__)
 class ColoredFormatter(logging.Formatter):
     """带颜色的日志格式化器"""
     grey = "\x1b[38;21m"
+    green = "\x1b[32;1m"
     yellow = "\x1b[33;21m"
     red = "\x1b[31;21m"
     bold_red = "\x1b[31;1m"
@@ -27,7 +28,7 @@ class ColoredFormatter(logging.Formatter):
 
     FORMATS = {
         logging.DEBUG: grey + format_str + reset,
-        logging.INFO: grey + format_str + reset,
+        logging.INFO: green + format_str + reset,
         logging.WARNING: yellow + format_str + reset,
         logging.ERROR: red + format_str + reset,
         logging.CRITICAL: bold_red + format_str + reset
@@ -359,7 +360,7 @@ class BotCore:
             token_resp = requests.post(token_url, json=token_data, timeout=5)
             if token_resp.status_code != 200 or not token_resp.json().get("tenant_access_token"):
                 logging.error("飞书tenant_access_token获取失败")
-                logging.error("这是因为飞书文档里写了发送图片需要上传图片并获得image_key，但是自定义机器人没有app_id和app_secret，没法获得tenant_access_token，也就没法获得image_key")
+                logging.WARNIN("这是因为飞书文档里写了发送图片需要上传图片并获得image_key，但是自定义机器人没有app_id和app_secret，没法获得tenant_access_token，也就没法获得image_key")
                 return None
             
             # 下载图片
