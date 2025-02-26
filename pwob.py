@@ -12,6 +12,7 @@ import hashlib
 import urllib.parse
 from datetime import datetime
 from threading import Thread, Timer, Lock
+from logging.handlers import TimedRotatingFileHandler
 
 app = Flask(__name__)
 # ================= 日志配置 =================
@@ -45,18 +46,51 @@ def setup_logging():
     # Windows启用VT模式
     if platform.system() == 'Windows':
         os.system('')  # 启用VT100转义序列支持
-    # 移除默认处理器
+    # 创建日志目录
+    os.makedirs('log', exist_ok=True)
+    # 获取根日志器
     root_logger = logging.getLogger()
-    for hdlr in root_logger.handlers[:]:
-        root_logger.removeHandler(hdlr)
+    root_logger.setLevel(logging.INFO)
+    # 移除默认处理器
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
     # 配置控制台输出
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(ColoredFormatter())
-    
-    # 配置级别和处理器
-    root_logger.setLevel(logging.INFO)
     root_logger.addHandler(console_handler)
+    
+    # 文件处理器
+    file_handler = TimedRotatingFileHandler(
+        filename=os.path.join('log', 'app.log'),  # 基础日志文件路径
+        when='midnight',  # 每天午夜滚动
+        interval=1,       # 每天生成一个新文件
+        backupCount=30,   # 保留30天日志
+        encoding='utf-8'
+    )
+    # 自定义文件名生成逻辑
+    def custom_namer(default_name):
+        # 将默认文件名格式从 app.log.2023-10-10 转换为 log/2023-10-10.log
+        base_dir = os.path.dirname(default_name)
+        base_file = os.path.basename(default_name)
+        
+        if '.' in base_file:
+            filename_parts = base_file.split('.')
+            if len(filename_parts) > 2:
+                date_str = filename_parts[-1]
+                return os.path.join(base_dir, f"{date_str}.log")
+        
+        return default_name
+    
+    file_handler.namer = custom_namer
+    
+    # 文件日志格式（无颜色）
+    file_formatter = logging.Formatter(
+        '[%(asctime)s][%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(file_formatter)
+    root_logger.addHandler(file_handler)
     
     # 抑制 Flask/Werkzeug 日志
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -125,19 +159,27 @@ class MessageProcessor:
         
         return segments
     
-    def deduplicate_message(self, message_id, event_time):
+    def deduplicate_message(self, identifier, event_time, user_id):
+        """基于唯一标识符、时间戳、用户ID生成MD5哈希进行去重"""
         with self.lock:
             current_time = time.time()
-            # 清理过期条目：当前时间 - 事件时间 > 过期时间
-            expired = [mid for mid, ts in self.processed_messages.items() 
-                      if current_time - ts > config["message_id_expiry"]]
-            for mid in expired:
-                del self.processed_messages[mid]
+            
+            # 生成唯一哈希键
+            unique_str = f"{identifier}_{event_time}_{user_id}"
+            unique_key = hashlib.md5(unique_str.encode()).hexdigest()
+            
+            # 清理过期条目（基于过期时间）
+            expired = [k for k, expiry in self.processed_messages.items() if expiry < current_time]
+            for k in expired:
+                del self.processed_messages[k]
+            
             # 检查是否已存在
-            if message_id in self.processed_messages:
+            if unique_key in self.processed_messages:
                 return False
-            # 记录事件原始时间
-            self.processed_messages[message_id] = event_time
+            
+            # 设置过期时间（当前时间 + 配置的保留时间）
+            expiry_time = current_time + config["message_id_expiry"]
+            self.processed_messages[unique_key] = expiry_time
             return True
     
 # ================= 推送渠道实现 =================
@@ -557,30 +599,47 @@ bot = BotCore()
 def handle_event():
     event = request.json
     
+        
+    # 第一层过滤：群消息直接忽略
+    if event.get('message_type') == 'group':
+        return jsonify(status="ignored")
+    
+    # 第二层过滤：精确匹配需要记录的事件类型
+    if (
+        (event.get('post_type') == 'message' and event.get('message_type') == 'private') 
+        or 
+        (event.get('post_type') == 'request' and event.get('request_type') == 'friend')
+    ):
+        # 完全原始数据克隆（不做任何修改）
+        raw_log = event.copy()
+        logging.info(
+            f"[原始事件] [{datetime.now().strftime('%H:%M:%S')}]\n" +
+            json.dumps(raw_log, indent=2, ensure_ascii=False)
+        )
+    
     # 统一处理好友申请的去重检查
     if event.get('post_type') == 'request' and event.get('request_type') == 'friend':
+        user_id = event.get('user_id')
         flag = event.get('flag', '')
-        if not flag:
-            return jsonify(status="error", message="缺少flag参数"), 400
-
-        # 使用flag生成全局唯一ID，并携带事件时间
-        unique_id = f"friend_req_{flag}"
         event_time = event.get('time', time.time())
-        if not bot.msg_processor.deduplicate_message(unique_id, event_time):
-            logging.info(f"[去重拦截] 已忽略重复好友申请：{unique_id}")
+        
+        # 使用三重标识符生成哈希键
+        if not bot.msg_processor.deduplicate_message(flag, event_time, user_id):
+            logging.info(f"[去重拦截] 已忽略重复好友申请：flag={flag}")
             return jsonify(status="ignored")
         
         # 在路由层完成所有处理
         return bot.handle_friend_request(event)
     
-    # 其他事件处理保持不变
+    # 其他事件处理
     if event.get('message_type') == 'group':
         return jsonify(status="ignored")
     
     message_id = event.get('message_id')
     if message_id:
+        user_id = event.get('user_id')
         event_time = event.get('time', time.time())
-        if not bot.msg_processor.deduplicate_message(message_id, event_time):
+        if not bot.msg_processor.deduplicate_message(message_id, event_time, user_id):
             return jsonify(status="ignored")
     
     try:
