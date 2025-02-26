@@ -76,7 +76,7 @@ python pwob.py
 
 企业微信渠道使用 `<font color=\"warning\">xxxx</font>\n>` 可以在消息模板中定义颜色。
 
-分别是`info` 绿色 `warning` 橙红色 `comment` 灰色，详见 [群机器人配置说明](https://developer.work.weixin.qq.com/document/path/91770)
+分别是 `info` 绿色、 `warning` 橙红色、 `comment` 灰色，详见 [群机器人配置说明](https://developer.work.weixin.qq.com/document/path/91770)
 
 其他渠道不支持该颜色定义，其中，钉钉可以自动忽略此定义，正常构造消息；飞书会把这些定义内容也推送到通知里，所以使用飞书渠道可以按需删除这些颜色定义代码。
 
